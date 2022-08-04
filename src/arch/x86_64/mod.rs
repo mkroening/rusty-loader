@@ -4,6 +4,7 @@ pub mod physicalmem;
 use core::arch::asm;
 #[cfg(target_os = "none")]
 use core::ptr::write_bytes;
+use core::ptr::NonNull;
 #[cfg(target_os = "none")]
 use core::{cmp, mem, slice};
 
@@ -169,7 +170,48 @@ pub unsafe fn find_kernel() -> &'static [u8] {
 }
 
 #[cfg(target_os = "none")]
+unsafe fn search_for_rsdp() -> u64 {
+	use rsdp::{
+		handler::{AcpiHandler, PhysicalMapping},
+		Rsdp,
+	};
+
+	#[derive(Clone)]
+	struct Handler;
+
+	impl AcpiHandler for Handler {
+		unsafe fn map_physical_region<T>(
+			&self,
+			physical_address: usize,
+			size: usize,
+		) -> PhysicalMapping<Self, T> {
+			assert!(size < LargePageSize::SIZE);
+			let address = align_down!(physical_address, LargePageSize::SIZE);
+			paging::map::<LargePageSize>(address, address, 1, PageTableEntryFlags::empty());
+
+			let virtual_start = NonNull::new(physical_address as *mut T).unwrap();
+			PhysicalMapping::new(physical_address, virtual_start, size, LargePageSize::SIZE, self.clone())
+		}
+
+		fn unmap_physical_region<T>(_region: &PhysicalMapping<Self, T>) {}
+	}
+
+	let mapping = Rsdp::search_for_on_bios(Handler).unwrap();
+	let rsdp = mapping.virtual_start().as_ref();
+	rsdp.validate().unwrap();
+	info!(
+		"Found RSDP revision {} with OEM ID {:?} at {:p}",
+		rsdp.revision(),
+		rsdp.oem_id(),
+		rsdp
+	);
+	rsdp as *const Rsdp as u64
+}
+
+#[cfg(target_os = "none")]
 pub unsafe fn boot_kernel(kernel_info: LoadedKernel) -> ! {
+	search_for_rsdp();
+
 	let LoadedKernel {
 		load_info,
 		entry_point,

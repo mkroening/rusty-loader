@@ -12,6 +12,7 @@ log = "0.4"
 
 [target.'cfg(all(target_os = "none", target_arch = "x86_64"))'.dependencies]
 multiboot = "0.8"
+rsdp = "2.0"
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 bitflags = "1.3"
