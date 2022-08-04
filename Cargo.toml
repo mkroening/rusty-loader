@@ -9,6 +9,7 @@ edition = "2021"
 [dependencies]
 hermit-entry = { version = "0.8", features = ["loader"] }
 log = "0.4"
+x86_64 = "0.14"
 
 [target.'cfg(all(target_os = "none", target_arch = "x86_64"))'.dependencies]
 multiboot = "0.8"

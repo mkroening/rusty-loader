@@ -16,7 +16,7 @@ use log::info;
 use multiboot::information::{MemoryManagement, Multiboot, PAddr};
 use uart_16550::SerialPort;
 
-use paging::{BasePageSize, LargePageSize, PageSize, PageTableEntryFlags};
+use paging::{BasePageSize, LargePageSize, PageSizeCompat, PageTableEntryFlags};
 
 #[cfg(target_os = "none")]
 extern "C" {
@@ -81,10 +81,20 @@ pub unsafe fn boot_kernel(
 
 #[cfg(target_os = "none")]
 pub unsafe fn find_kernel() -> &'static [u8] {
+	physicalmem::init(0x800000);
+
+	let page_address = 0x1200000;
+	paging::map::<BasePageSize>(page_address, page_address, 1, PageTableEntryFlags::WRITABLE);
+
+	let buf = slice::from_raw_parts_mut(page_address as *mut u8, 0x10);
+	dbg!(&buf);
+	buf[0] = 42;
+	dbg!(&buf);
+
 	// Identity-map the Multiboot information.
 	assert!(mb_info > 0, "Could not find Multiboot information");
 	info!("Found Multiboot information at {:#x}", mb_info);
-	let page_address = align_down!(mb_info, BasePageSize::SIZE);
+	let page_address = align_down!(mb_info, BasePageSize::SIZE_COMPAT);
 	paging::map::<BasePageSize>(page_address, page_address, 1, PageTableEntryFlags::WRITABLE);
 
 	// Load the Multiboot information and identity-map the modules information.
@@ -95,7 +105,7 @@ pub unsafe fn find_kernel() -> &'static [u8] {
 		.next()
 		.expect("Could not find first map address")
 		.start as usize;
-	let page_address = align_down!(modules_address, BasePageSize::SIZE);
+	let page_address = align_down!(modules_address, BasePageSize::SIZE_COMPAT);
 	paging::map::<BasePageSize>(page_address, page_address, 1, PageTableEntryFlags::empty());
 
 	// Iterate through all modules.
@@ -122,7 +132,7 @@ pub unsafe fn find_kernel() -> &'static [u8] {
 	let elf_len = end_address - start_address;
 	info!("Module length: {:#x}", elf_len);
 
-	let free_memory_address = align_up!(end_address, LargePageSize::SIZE);
+	let free_memory_address = align_up!(end_address, LargePageSize::SIZE_COMPAT);
 	// TODO: Workaround for https://github.com/hermitcore/rusty-loader/issues/96
 	let free_memory_address = cmp::max(free_memory_address, 0x800000);
 	// Memory after the highest end address is unused and available for the physical memory manager.
@@ -135,14 +145,14 @@ pub unsafe fn find_kernel() -> &'static [u8] {
 	);
 	assert!(start_address > 0);
 	info!("Found an ELF module at {:#x}", start_address);
-	let page_address = align_down!(start_address, BasePageSize::SIZE);
+	let page_address = align_down!(start_address, BasePageSize::SIZE_COMPAT);
 	let counter =
-		(align_up!(start_address, LargePageSize::SIZE) - page_address) / BasePageSize::SIZE;
+		(align_up!(start_address, LargePageSize::SIZE_COMPAT) - page_address) / BasePageSize::SIZE_COMPAT;
 	info!(
 		"Map {} pages at {:#x} (page size {} KByte)",
 		counter,
 		page_address,
-		BasePageSize::SIZE / 1024
+		BasePageSize::SIZE_COMPAT / 1024
 	);
 	paging::map::<BasePageSize>(
 		page_address,
@@ -152,14 +162,14 @@ pub unsafe fn find_kernel() -> &'static [u8] {
 	);
 
 	// map also the rest of the module
-	let address = align_up!(start_address, LargePageSize::SIZE);
-	let counter = (align_up!(end_address, LargePageSize::SIZE) - address) / LargePageSize::SIZE;
+	let address = align_up!(start_address, LargePageSize::SIZE_COMPAT);
+	let counter = (align_up!(end_address, LargePageSize::SIZE_COMPAT) - address) / LargePageSize::SIZE_COMPAT;
 	if counter > 0 {
 		info!(
 			"Map {} pages at {:#x} (page size {} KByte)",
 			counter,
 			address,
-			LargePageSize::SIZE / 1024
+			LargePageSize::SIZE_COMPAT / 1024
 		);
 		paging::map::<LargePageSize>(address, address, counter, PageTableEntryFlags::WRITABLE);
 	}
@@ -180,19 +190,19 @@ pub unsafe fn boot_kernel(kernel_info: LoadedKernel) -> ! {
 		let address = command_line.as_ptr();
 
 		// Identity-map the command line.
-		let page_address = align_down!(address as usize, BasePageSize::SIZE);
+		let page_address = align_down!(address as usize, BasePageSize::SIZE_COMPAT);
 		paging::map::<BasePageSize>(page_address, page_address, 1, PageTableEntryFlags::empty());
 
 		command_line
 	});
 
 	// determine boot stack address
-	let mut new_stack = align_up!(&kernel_end as *const u8 as usize, BasePageSize::SIZE);
+	let mut new_stack = align_up!(&kernel_end as *const u8 as usize, BasePageSize::SIZE_COMPAT);
 
 	if new_stack + KERNEL_STACK_SIZE as usize > mb_info as usize {
 		new_stack = align_up!(
 			mb_info + mem::size_of::<Multiboot<'_, '_>>(),
-			BasePageSize::SIZE
+			BasePageSize::SIZE_COMPAT
 		);
 	}
 
@@ -200,7 +210,7 @@ pub unsafe fn boot_kernel(kernel_info: LoadedKernel) -> ! {
 		let cmdline = command_line.as_ptr() as usize;
 		let cmdsize = command_line.len();
 		if new_stack + KERNEL_STACK_SIZE as usize > cmdline {
-			new_stack = align_up!((cmdline + cmdsize), BasePageSize::SIZE);
+			new_stack = align_up!((cmdline + cmdsize), BasePageSize::SIZE_COMPAT);
 		}
 	}
 
@@ -211,7 +221,7 @@ pub unsafe fn boot_kernel(kernel_info: LoadedKernel) -> ! {
 	paging::map::<BasePageSize>(
 		new_stack,
 		new_stack,
-		KERNEL_STACK_SIZE as usize / BasePageSize::SIZE,
+		KERNEL_STACK_SIZE as usize / BasePageSize::SIZE_COMPAT,
 		PageTableEntryFlags::WRITABLE,
 	);
 
@@ -255,8 +265,8 @@ pub unsafe fn boot_kernel(kernel_info: LoadedKernel) -> ! {
 }
 
 unsafe fn map_memory(address: usize, memory_size: usize) -> usize {
-	let address = align_up!(address, LargePageSize::SIZE);
-	let page_count = align_up!(memory_size, LargePageSize::SIZE) / LargePageSize::SIZE;
+	let address = align_up!(address, LargePageSize::SIZE_COMPAT);
+	let page_count = align_up!(memory_size, LargePageSize::SIZE_COMPAT) / LargePageSize::SIZE_COMPAT;
 
 	paging::map::<LargePageSize>(address, address, page_count, PageTableEntryFlags::WRITABLE);
 
@@ -264,6 +274,6 @@ unsafe fn map_memory(address: usize, memory_size: usize) -> usize {
 }
 
 pub unsafe fn get_memory(memory_size: u64) -> u64 {
-	let address = physicalmem::allocate(align_up!(memory_size as usize, LargePageSize::SIZE));
+	let address = physicalmem::allocate(align_up!(memory_size as usize, LargePageSize::SIZE_COMPAT));
 	map_memory(address, memory_size as usize) as u64
 }
