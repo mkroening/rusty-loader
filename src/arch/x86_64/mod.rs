@@ -83,6 +83,8 @@ pub unsafe fn boot_kernel(
 #[cfg(target_os = "none")]
 pub unsafe fn find_kernel() -> &'static [u8] {
 	// Identity-map the Multiboot information.
+
+use x86_64::structures::paging::Page;
 	assert!(mb_info > 0, "Could not find Multiboot information");
 	info!("Found Multiboot information at {:#x}", mb_info);
 	let page_address = align_down!(mb_info, BasePageSize::SIZE as usize);
@@ -154,6 +156,8 @@ pub unsafe fn find_kernel() -> &'static [u8] {
 
 	// map also the rest of the module
 	let address = align_up!(start_address, LargePageSize::SIZE as usize);
+	paging::clean_up();
+	// paging::unmap(Page::<BasePageSize>::containing_address(x86_64::VirtAddr::new(address as u64)));
 	let counter = (align_up!(end_address, LargePageSize::SIZE as usize) - address)
 		/ LargePageSize::SIZE as usize;
 	if counter > 0 {
