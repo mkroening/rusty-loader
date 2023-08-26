@@ -6,6 +6,7 @@ use fdt::Fdt;
 static mut STACK: Stack = Stack::new();
 static HART_ID: AtomicUsize = AtomicUsize::new(0);
 static FDT: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
+static mut FDT_COPY: [u8; 0x2000] = [0; 0x2000];
 
 pub fn get_hart_id() -> usize {
 	HART_ID.load(Ordering::Relaxed)
@@ -50,7 +51,12 @@ pub unsafe extern "C" fn _start(hart_id: usize, fdt: *const u8) -> ! {
 
 extern "C" fn start(hart_id: usize, fdt: *const u8) -> ! {
 	HART_ID.store(hart_id, Ordering::Relaxed);
-	FDT.store(fdt.cast_mut(), Ordering::Relaxed);
+	unsafe {
+		
+	ptr::copy(fdt, FDT_COPY.as_mut_ptr(), 0x2000);
+	ptr::write_bytes(fdt.cast_mut(), 0, 0x2000);
+	FDT.store(FDT_COPY.as_mut_ptr(), Ordering::Relaxed);
+	}
 
 	unsafe { crate::none::loader_main() }
 }
